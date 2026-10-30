@@ -1,6 +1,13 @@
-<html>
-<style>
-   div{min-height:1em;}
-</style>
-<body>{<br/>  &quot;name&quot;: &quot;signaling-server&quot;,<br/>  &quot;version&quot;: &quot;1.0.0&quot;,<br/>  &quot;description&quot;: &quot;Secure Messenger Signaling Server&quot;,<br/>  &quot;main&quot;: &quot;server.js&quot;,<br/>  &quot;scripts&quot;: {<br/>    &quot;start&quot;: &quot;node server.js&quot;<br/>  },<br/>  &quot;dependencies&quot;: {<br/>    &quot;express&quot;: &quot;^4.18.2&quot;,<br/>    &quot;socket.io&quot;: &quot;^4.7.2&quot;<br/>  }<br/>}<br/></body>
-</html>
+{
+  "name": "signaling-server",
+  "version": "1.0.0",
+  "description": "Secure Messenger Signaling Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
+}
