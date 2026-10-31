@@ -5,50 +5,130 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*" }
+    cors: { origin: "*" },
+    maxHttpBufferSize: 1e7 // 10MB तक की फाइल और वॉइस नोट के लिए
 });
 
 const activeUsers = {};
+const pendingMessages = {}; // ऑफलाइन यूजर्स के मैसेज सेव रखने के लिए
 
 io.on('connection', (socket) => {
     console.log('User connected: ' + socket.id);
 
-    // यूजर रजिस्टर होना और ऑनलाइन स्टेटस ब्रॉडकास्ट करना
+    // 1. यूजर रजिस्टर होना और पेंडिंग मैसेज डिलीवर करना
     socket.on('register', (username) => {
-        if (username) {
-            const cleanUser = username.toUpperCase();
-            activeUsers[cleanUser] = socket.id;
-            console.log(`User registered: ${cleanUser} -> ${socket.id}`);
-            
-            // सभी को बताएं कि यह यूजर ऑनलाइन आ गया है
-            io.emit('user-status-changed', { username: cleanUser, status: 'online' });
+        if (!username) return;
+        const cleanUser = username.trim().toUpperCase();
+        activeUsers[cleanUser] = socket.id;
+        socket.username = cleanUser;
+
+        // सभी को ऑनलाइन यूजर्स की लिस्ट और स्टेटस भेजें
+        io.emit('online-users-list', Object.keys(activeUsers));
+        io.emit('user-status-changed', { username: cleanUser, status: 'online' });
+
+        // अगर यूजर के ऑफलाइन रहते कोई मैसेज आया था, तो तुरंत भेजें
+        if (pendingMessages[cleanUser] && pendingMessages[cleanUser].length > 0) {
+            pendingMessages[cleanUser].forEach((msg) => {
+                io.to(socket.id).emit('private-message', msg);
+                // भेजने वाले को डबल टिक (Delivered) भेजें
+                const senderSocket = activeUsers[msg.from];
+                if (senderSocket) {
+                    io.to(senderSocket).emit('message-status-update', {
+                        from: cleanUser,
+                        messageId: msg.messageId,
+                        status: 'delivered'
+                    });
+                }
+            });
+            pendingMessages[cleanUser] = [];
         }
     });
 
-    // 💬 चैट मैसेज, फाइल्स और वॉइस नोट (Voice Mail) फॉरवर्ड करना
-    socket.on('send-message', (data) => {
-        if (data && data.to) {
-            const targetKey = data.to.toUpperCase();
-            const targetSocketId = activeUsers[targetKey];
+    // किसी खास यूजर का स्टेटस चेक करना
+    socket.on('check-user-status', (targetUser) => {
+        if (!targetUser) return;
+        const cleanTarget = targetUser.trim().toUpperCase();
+        const isOnline = !!activeUsers[cleanTarget];
+        socket.emit('user-status-changed', {
+            username: cleanTarget,
+            status: isOnline ? 'online' : 'offline'
+        });
+    });
 
-            if (targetSocketId) {
-                io.to(targetSocketId).emit('private-message', {
-                    from: data.from,
-                    message: data.message,
-                    isFile: data.isFile || false,
-                    fileName: data.fileName || ''
-                });
-            }
+    // 2. मैसेज भेजना + सिंगल/डबल टिक कन्फर्मेशन
+    socket.on('send-message', (data, callback) => {
+        if (!data || !data.to || !data.from) return;
+        const targetKey = data.to.trim().toUpperCase();
+        const senderKey = data.from.trim().toUpperCase();
+        const targetSocketId = activeUsers[targetKey];
+
+        const msgPayload = {
+            messageId: data.messageId,
+            from: senderKey,
+            message: data.message,
+            isFile: data.isFile || false,
+            fileName: data.fileName || ''
+        };
+
+        // भेजने वाले को तुरंत 1 टिक (Sent) का सिग्नल दें
+        if (typeof callback === 'function') {
+            callback({ status: 'sent', messageId: data.messageId });
+        }
+
+        if (targetSocketId) {
+            // सामने वाला ऑनलाइन है -> तुरंत मैसेज भेजें
+            io.to(targetSocketId).emit('private-message', msgPayload);
+        } else {
+            // सामने वाला ऑफलाइन है -> क्यू में सेव करें
+            if (!pendingMessages[targetKey]) pendingMessages[targetKey] = [];
+            pendingMessages[targetKey].push(msgPayload);
         }
     });
 
-    // WebRTC कॉलिंग इवेंट्स (ऑफर, आंसर, ICE, हँगअप)
+    // 3. मैसेज रिसीव होने पर डबल टिक (Delivered) अपडेट करना
+    socket.on('message-delivered', (data) => {
+        if (!data || !data.to) return;
+        const senderSocketId = activeUsers[data.to.trim().toUpperCase()];
+        if (senderSocketId) {
+            io.to(senderSocketId).emit('message-status-update', {
+                from: data.from,
+                messageId: data.messageId,
+                status: 'delivered'
+            });
+        }
+    });
+
+    // 4. मैसेज देख लेने पर नीला टिक (Blue Seen Tick) अपडेट करना
+    socket.on('message-seen', (data) => {
+        if (!data || !data.to) return;
+        const senderSocketId = activeUsers[data.to.trim().toUpperCase()];
+        if (senderSocketId) {
+            io.to(senderSocketId).emit('message-status-update', {
+                from: data.from,
+                messageId: data.messageId,
+                status: 'seen'
+            });
+        }
+    });
+
+    // पूरी चैट खोलने पर सभी पुराने मैसेज को एक साथ Blue Tick करना
+    socket.on('mark-seen', (data) => {
+        if (!data || !data.to) return;
+        const senderSocketId = activeUsers[data.to.trim().toUpperCase()];
+        if (senderSocketId) {
+            io.to(senderSocketId).emit('all-messages-seen', {
+                from: data.from.trim().toUpperCase()
+            });
+        }
+    });
+
+    // 5. WebRTC कॉलिंग इवेंट्स
     socket.on('call-user', (data) => {
         if (data && data.to) {
-            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            const targetSocketId = activeUsers[data.to.trim().toUpperCase()];
             if (targetSocketId) {
                 io.to(targetSocketId).emit('incoming-call', {
-                    from: data.from,
+                    from: data.from.trim().toUpperCase(),
                     offer: data.offer,
                     callType: data.callType
                 });
@@ -58,7 +138,7 @@ io.on('connection', (socket) => {
 
     socket.on('make-answer', (data) => {
         if (data && data.to) {
-            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            const targetSocketId = activeUsers[data.to.trim().toUpperCase()];
             if (targetSocketId) {
                 io.to(targetSocketId).emit('call-answered', { answer: data.answer });
             }
@@ -67,7 +147,7 @@ io.on('connection', (socket) => {
 
     socket.on('ice-candidate', (data) => {
         if (data && data.to) {
-            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            const targetSocketId = activeUsers[data.to.trim().toUpperCase()];
             if (targetSocketId) {
                 io.to(targetSocketId).emit('ice-candidate', { candidate: data.candidate });
             }
@@ -76,14 +156,14 @@ io.on('connection', (socket) => {
 
     socket.on('hangup', (data) => {
         if (data && data.to) {
-            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            const targetSocketId = activeUsers[data.to.trim().toUpperCase()];
             if (targetSocketId) {
                 io.to(targetSocketId).emit('hangup');
             }
         }
     });
 
-    // डिसकनेक्ट होने पर ऑफलाइन स्टेटस अपडेट करना
+    // 6. डिस्कनेक्ट होने पर ऑफलाइन स्टेटस भेजना
     socket.on('disconnect', () => {
         let disconnectedUser = '';
         for (let username in activeUsers) {
@@ -94,8 +174,8 @@ io.on('connection', (socket) => {
             }
         }
         if (disconnectedUser) {
-            console.log(`User disconnected: ${disconnectedUser}`);
             io.emit('user-status-changed', { username: disconnectedUser, status: 'offline' });
+            io.emit('online-users-list', Object.keys(activeUsers));
         }
     });
 });
