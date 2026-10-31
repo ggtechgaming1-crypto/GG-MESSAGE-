@@ -89,3 +89,36 @@ socket.on('send-message', (data) => {
         });
     }
 });
+function sendMessage() {
+    const msgInput = document.getElementById('messageInput');
+    const chatBox = document.getElementById('chatBox');
+
+    if (msgInput.value.trim() !== "") {
+        const messageText = msgInput.value;
+        
+        // 1. सर्वर को सॉकेट के जरिए मैसेज भेजें
+        if (socket && currentTargetUsername) {
+            socket.emit('send-message', { 
+                to: currentTargetUsername, 
+                from: currentLoginUsername, 
+                message: messageText, 
+                isFile: false 
+            });
+        }
+
+        // 2. लोकल स्टोरेज में सेव करें
+        saveMessageToStore(currentTargetUsername, currentLoginUsername, messageText, false, "");
+        saveFriendToList(currentTargetUsername);
+
+        // 3. UI पर '✓' या '✓✓' (Double Tick) मार्क के साथ दिखाएं
+        const msgDiv = document.createElement('div');
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        msgDiv.className = 'chat-msg outgoing';
+        msgDiv.innerHTML = `<span>${messageText}</span><span class="msg-time">${timeStr} <i class="fa-solid fa-check" style="font-size:9px; margin-left:3px;" title="Sent"></i></span>`;
+        
+        chatBox.appendChild(msgDiv);
+        msgInput.value = "";
+        chatBox.scrollTop = chatBox.scrollHeight;
+        renderHistorySummary();
+    }
+}
