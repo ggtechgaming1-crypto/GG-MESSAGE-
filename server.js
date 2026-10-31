@@ -75,3 +75,17 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Signaling server running on port ${PORT}`);
 });
+// server.js के अंदर यह कोड होना अनिवार्य है
+socket.on('send-message', (data) => {
+    // data में { to, from, message, isFile, fileName } होता है
+    const targetSocketId = activeUsers[data.to];
+    if (targetSocketId) {
+        // सही यूजर की सॉकेट आईडी पर मैसेज भेजें
+        io.to(targetSocketId).emit('private-message', {
+            from: data.from,
+            message: data.message,
+            isFile: data.isFile || false,
+            fileName: data.fileName || ''
+        });
+    }
+});
