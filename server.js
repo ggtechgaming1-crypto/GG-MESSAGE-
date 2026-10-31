@@ -16,47 +16,78 @@ io.on('connection', (socket) => {
 
     // यूजर रजिस्टर होना
     socket.on('register', (username) => {
-        activeUsers[username] = socket.id;
-        console.log(`User registered: ${username} -> ${socket.id}`);
+        if (username) {
+            activeUsers[username.toUpperCase()] = socket.id;
+            console.log(`User registered: ${username.toUpperCase()} -> ${socket.id}`);
+        }
+    });
+
+    // 💬 चैट मैसेज / एसएमएस भेजना और रिसीव करना (यह कनेक्शन के अंदर होना चाहिए)
+    socket.on('send-message', (data) => {
+        // data में { to, from, message, isFile, fileName } होता है
+        if (data && data.to) {
+            const targetKey = data.to.toUpperCase();
+            const targetSocketId = activeUsers[targetKey];
+            
+            console.log(`Message from ${data.from} to ${data.to} (Target Socket: ${targetSocketId})`);
+
+            if (targetSocketId) {
+                // सही यूजर की सॉकेट आईडी पर मैसेज भेजें
+                io.to(targetSocketId).emit('private-message', {
+                    from: data.from,
+                    message: data.message,
+                    isFile: data.isFile || false,
+                    fileName: data.fileName || ''
+                });
+            }
+        }
     });
 
     // WebRTC ऑफर भेजना (कॉल मिलाना)
     socket.on('call-user', (data) => {
-        const targetSocketId = activeUsers[data.to];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('incoming-call', {
-                from: data.from,
-                offer: data.offer,
-                callType: data.callType
-            });
+        if (data && data.to) {
+            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('incoming-call', {
+                    from: data.from,
+                    offer: data.offer,
+                    callType: data.callType
+                });
+            }
         }
     });
 
     // WebRTC आंसर भेजना (कॉल रिसीव करना)
     socket.on('make-answer', (data) => {
-        const targetSocketId = activeUsers[data.to];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('call-answered', {
-                answer: data.answer
-            });
+        if (data && data.to) {
+            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('call-answered', {
+                    answer: data.answer
+                });
+            }
         }
     });
 
     // ICE Candidate शेयर करना (नेटवर्क पाथ जोड़ने के लिए)
     socket.on('ice-candidate', (data) => {
-        const targetSocketId = activeUsers[data.to];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('ice-candidate', {
-                candidate: data.candidate
-            });
+        if (data && data.to) {
+            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('ice-candidate', {
+                    candidate: data.candidate
+                });
+            }
         }
     });
 
     // कॉल काटना / डिसकनेक्ट होना
     socket.on('hangup', (data) => {
-        const targetSocketId = activeUsers[data.to];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('hangup');
+        if (data && data.to) {
+            const targetSocketId = activeUsers[data.to.toUpperCase()];
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('hangup');
+            }
         }
     });
 
@@ -75,50 +106,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Signaling server running on port ${PORT}`);
 });
-// server.js के अंदर यह कोड होना अनिवार्य है
-socket.on('send-message', (data) => {
-    // data में { to, from, message, isFile, fileName } होता है
-    const targetSocketId = activeUsers[data.to];
-    if (targetSocketId) {
-        // सही यूजर की सॉकेट आईडी पर मैसेज भेजें
-        io.to(targetSocketId).emit('private-message', {
-            from: data.from,
-            message: data.message,
-            isFile: data.isFile || false,
-            fileName: data.fileName || ''
-        });
-    }
-});
-function sendMessage() {
-    const msgInput = document.getElementById('messageInput');
-    const chatBox = document.getElementById('chatBox');
-
-    if (msgInput.value.trim() !== "") {
-        const messageText = msgInput.value;
-        
-        // 1. सर्वर को सॉकेट के जरिए मैसेज भेजें
-        if (socket && currentTargetUsername) {
-            socket.emit('send-message', { 
-                to: currentTargetUsername, 
-                from: currentLoginUsername, 
-                message: messageText, 
-                isFile: false 
-            });
-        }
-
-        // 2. लोकल स्टोरेज में सेव करें
-        saveMessageToStore(currentTargetUsername, currentLoginUsername, messageText, false, "");
-        saveFriendToList(currentTargetUsername);
-
-        // 3. UI पर '✓' या '✓✓' (Double Tick) मार्क के साथ दिखाएं
-        const msgDiv = document.createElement('div');
-        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        msgDiv.className = 'chat-msg outgoing';
-        msgDiv.innerHTML = `<span>${messageText}</span><span class="msg-time">${timeStr} <i class="fa-solid fa-check" style="font-size:9px; margin-left:3px;" title="Sent"></i></span>`;
-        
-        chatBox.appendChild(msgDiv);
-        msgInput.value = "";
-        chatBox.scrollTop = chatBox.scrollHeight;
-        renderHistorySummary();
-    }
-}
